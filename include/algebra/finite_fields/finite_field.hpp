@@ -86,16 +86,28 @@ public:
     }
 
     FiniteFieldElement add(const FiniteFieldElement& other) const {
+	if (parent_type::acache_[index_ * parent_type::cardinality() + other.index_].has_value())
+		return *parent_type::acache_[index_ * parent_type::cardinality() + other.index_];
+	else if (parent_type::acache_[other.index_ * parent_type::cardinality() + index_].has_value())
+		return *parent_type::acache_[other.index_ * parent_type::cardinality() + index_];
+        
         const polynomial_type sum = value_.add(other.value_);
-        return from_polynomial(sum);
+        FiniteFieldElement element = from_polynomial(sum);
+	parent_type::acache_[index_ * parent_type::cardinality() + other.index_] = element;
+	parent_type::acache_[other.index_ * parent_type::cardinality() + index_] = element;
+
+	return element;
     }
 
     FiniteFieldElement negate() const {
-        return from_polynomial(value_.negate());
+	if (parent_type::ncache_[index_].has_value())
+		return *parent_type::ncache_[index_];
+        FiniteFieldElement element = from_polynomial(value_.negate());
+	parent_type::ncache_[index_] = element;
+	return element;
     }
 
     FiniteFieldElement multiply(const FiniteFieldElement& other) const {
-	
 	if (parent_type::mcache_[index_ * parent_type::cardinality() + other.index_].has_value())
 		return *parent_type::mcache_[index_ * parent_type::cardinality() + other.index_];
 	else if (parent_type::mcache_[other.index_ * parent_type::cardinality() + index_].has_value())
@@ -113,6 +125,8 @@ public:
         if (is_zero()) {
             throw std::domain_error("Zero has no reciprocal");
         }
+	if (parent_type::rcache_[index_].has_value())
+		return *parent_type::rcache_[index_];
         polynomial_type previous_remainder = parent_type::modulus();
         polynomial_type remainder = value_;
         polynomial_type previous_coefficient = polynomial_type::zero();
@@ -131,7 +145,9 @@ public:
             throw std::logic_error("The element is not invertible for this modulus");
         }
         const coefficient_type scale = previous_remainder.coefficient(0).reciprocal();
-        return from_polynomial(previous_coefficient.scale_left(scale));
+        FiniteFieldElement element = from_polynomial(previous_coefficient.scale_left(scale));
+	parent_type::rcache_[index_] = element;
+        return element;
     }
 
     bool is_zero() const {
@@ -189,6 +205,18 @@ public:
     inline static std::vector<std::optional<Element>> mcache_ = [] {
 		const uint64_t c = FiniteField<P, K>::cardinality();
 		return std::vector<std::optional<Element>>(c * c, std::nullopt);
+	}();
+    inline static std::vector<std::optional<Element>> acache_ = [] {
+		const uint64_t c = FiniteField<P, K>::cardinality();
+		return std::vector<std::optional<Element>>(c * c, std::nullopt);
+	}();
+    inline static std::vector<std::optional<Element>> ncache_ = [] {
+		const uint64_t c = FiniteField<P, K>::cardinality();
+		return std::vector<std::optional<Element>>(c, std::nullopt);
+	}();
+    inline static std::vector<std::optional<Element>> rcache_ = [] {
+		const uint64_t c = FiniteField<P, K>::cardinality();
+		return std::vector<std::optional<Element>>(c, std::nullopt);
 	}();
 
     FiniteField() {
