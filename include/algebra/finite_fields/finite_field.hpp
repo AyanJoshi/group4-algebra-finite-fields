@@ -26,13 +26,22 @@ public:
     using algebra = FieldDescriptor;
     using coefficient_type = PrimeFieldElement<P>;
     using polynomial_type = Polynomial<coefficient_type>;
-
+    static uint64_t get_index(const polynomial_type& value) {
+	uint64_t i = 0, p = 1;
+	for (size_t deg = 0; deg < K; deg++) {
+		i += value.coefficient(deg).representative() * p;
+		p *= P;
+	}
+	return i;
+    }
 private:
     polynomial_type value_;
+    uint64_t index_ = 0;
     struct Reduced {};
 
-    FiniteFieldElement(polynomial_type value, Reduced) : value_(std::move(value)) {}
 
+    FiniteFieldElement(polynomial_type value, Reduced) : value_(std::move(value)),
+				  			 index_(get_index(value_)) {}
 public:
     FiniteFieldElement() {
         static_cast<void>(parent_type::modulus());
@@ -86,8 +95,18 @@ public:
     }
 
     FiniteFieldElement multiply(const FiniteFieldElement& other) const {
-        const polynomial_type product = value_.multiply(other.value_);
-        return from_polynomial(product);
+	
+	if (parent_type::mcache_[index_ * parent_type::cardinality() + other.index_].has_value())
+		return *parent_type::mcache_[index_ * parent_type::cardinality() + other.index_];
+	else if (parent_type::mcache_[other.index_ * parent_type::cardinality() + index_].has_value())
+		return *parent_type::mcache_[other.index_ * parent_type::cardinality() + index_];
+        
+	const polynomial_type product = value_.multiply(other.value_);
+        FiniteFieldElement element = from_polynomial(product);
+	parent_type::mcache_[index_ * parent_type::cardinality() + other.index_] = element;
+	parent_type::mcache_[other.index_ * parent_type::cardinality() + index_] = element;
+	return element;
+
     }
 
     FiniteFieldElement reciprocal() const {
@@ -167,6 +186,10 @@ public:
     using PolynomialType = typename Element::polynomial_type;
     static constexpr std::uint32_t characteristic = P;
     static constexpr std::size_t extension_degree = K;
+    inline static std::vector<std::optional<Element>> mcache_ = [] {
+		const uint64_t c = FiniteField<P, K>::cardinality();
+		return std::vector<std::optional<Element>>(c * c, std::nullopt);
+	}();
 
     FiniteField() {
         initialize();
@@ -193,11 +216,11 @@ public:
     }
 
     static Element element(std::initializer_list<std::int64_t> values) {
-        return Element::from_coefficients(values);
+	return Element::from_coefficients(values);
     }
 
     static Element element(std::int64_t value) {
-        return Element::from_integer(value);
+	return Element::from_integer(value);
     }
 
     static Element zero() {
