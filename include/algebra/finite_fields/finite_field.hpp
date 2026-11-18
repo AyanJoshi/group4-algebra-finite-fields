@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <utility>
 #include <algebra/finite_fields/modulus.hpp>
+#include <vector>
 
 namespace algebra {
 
@@ -153,6 +154,78 @@ public:
 
     friend std::ostream& operator<<(std::ostream& out, const UncachedFiniteFieldElement& value) {
         return out << value.value_;
+    }
+};
+
+// Answer tables for one field, built once from the original (uncached) arithmetic.
+// Element numbers are base-P digits: c0 + P*c1 + P^2*c2 + ...
+template<std::uint32_t P, std::size_t K, class ModulusPolicy>
+struct FiniteFieldTables {
+    using Uncached = UncachedFiniteFieldElement<P, K, ModulusPolicy>;
+    using polynomial_type = typename Uncached::polynomial_type;
+
+    std::uint64_t size = 0;                    // number of elements (1331 for 11^3)
+    std::vector<polynomial_type> polynomial;   // polynomial[i]: the element numbered i
+    std::vector<std::uint16_t> add;            // add[a * size + b]: number of a + b
+    std::vector<std::uint16_t> multiply;       // multiply[a * size + b]: number of a * b
+    std::vector<std::uint16_t> negate;         // negate[a]: number of -a
+    std::vector<std::uint16_t> reciprocal;     // reciprocal[a]: number of 1/a (a != 0)
+
+    // Number of a reduced polynomial: same formula as Wendell's get_index.
+    static std::uint64_t index_of(const polynomial_type& value) {
+        std::uint64_t index = 0;
+        std::uint64_t place = 1;
+        for (std::size_t degree = 0; degree < K; ++degree) {
+            index += value.coefficient(degree).representative() * place;
+            place *= P;
+        }
+        return index;
+    }
+
+    FiniteFieldTables() {
+        size = FiniteField<P, K, ModulusPolicy>::cardinality();
+        if (size > 65536) {
+            throw std::length_error("Field is too large for 16-bit element tables");
+        }
+        std::vector<Uncached> elements;
+        elements.reserve(size);
+        polynomial.reserve(size);
+        for (std::uint64_t i = 0; i < size;i++) {
+            elements.push_back(Uncached::from_index(i));
+            polynomial.push_back(elements.back().representative());
+        }
+        add.resize(size * size);
+        multiply.resize(size * size);
+        negate.resize(size);
+        reciprocal.resize(size);
+        
+        // for (int a = 0; a<=size-1;a++) {
+        //     negate[a] = (-1)*a;
+        //     if(a!=0) {
+        //         reciprocal[a] = 1/a;
+        //     }
+        //     for (int b=0; b<=size-1;b++) {
+        //         add[a*size+b] = a+b;
+        //         multiply[a*size+b] = a*b;
+        //     }
+        // }
+
+        for (std::uint64_t a=0; a<size; a++) {
+            negate[a] = static_cast<std::uint16_t>(index_of(elements[a].negate().representative()));
+            if (!elements[a].is_zero()) {
+                reciprocal[a] = static_cast<std::uint16_t>(index_of(elements[a].reciprocal().representative()));/* same pattern, using elements[a].reciprocal() */;
+            }
+            for (std::uint64_t b=0; b<size; b++) {
+                add[a * size + b] = static_cast<std::uint16_t>(index_of(elements[a].add(elements[b]).representative()));
+                multiply[a * size + b] = static_cast<std::uint16_t>(index_of(elements[a].multiply(elements[b]).representative()));
+            }
+        }
+    }
+
+    // Built the first time anyone asks, then reused for the rest of the program.
+    static const FiniteFieldTables& get() {
+        static const FiniteFieldTables tables;
+        return tables;
     }
 };
 
