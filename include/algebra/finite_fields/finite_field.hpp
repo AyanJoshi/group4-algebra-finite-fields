@@ -15,6 +15,148 @@ template<std::uint32_t P, std::size_t K = 1, class ModulusPolicy = FirstEnumerat
 class FiniteField;
 
 template<std::uint32_t P, std::size_t K, class ModulusPolicy>
+class UncachedFiniteFieldElement : public AdditiveOperators<UncachedFiniteFieldElement<P, K, ModulusPolicy>>,
+                           public MultiplicativeOperators<UncachedFiniteFieldElement<P, K, ModulusPolicy>>,
+                           public DivisionOperators<UncachedFiniteFieldElement<P, K, ModulusPolicy>> {
+    static_assert(is_prime(P));
+    static_assert(K > 0);
+
+public:
+    using parent_type = FiniteField<P, K, ModulusPolicy>;
+    using algebra = FieldDescriptor;
+    using coefficient_type = PrimeFieldElement<P>;
+    using polynomial_type = Polynomial<coefficient_type>;
+
+private:
+    polynomial_type value_;
+    struct Reduced {};
+
+    UncachedFiniteFieldElement(polynomial_type value, Reduced) : value_(std::move(value)) {}
+
+public:
+    UncachedFiniteFieldElement() {
+        static_cast<void>(parent_type::modulus());
+    }
+
+    static UncachedFiniteFieldElement from_polynomial(const polynomial_type& value) {
+        polynomial_type remainder = value % parent_type::modulus();
+        return UncachedFiniteFieldElement(std::move(remainder), Reduced{});
+    }
+
+    static UncachedFiniteFieldElement from_coefficients(std::initializer_list<std::int64_t> values) {
+        polynomial_type value;
+        std::size_t index = 0;
+        for (const auto coefficient : values) {
+            value.set_coefficient(index++, coefficient_type::from_integer(coefficient));
+        }
+        return from_polynomial(value);
+    }
+
+    static UncachedFiniteFieldElement from_integer(std::int64_t value) {
+        return from_polynomial(polynomial_type{coefficient_type::from_integer(value)});
+    }
+
+    static UncachedFiniteFieldElement from_index(std::uint64_t index) {
+        if (index >= parent_type::cardinality()) {
+            throw std::out_of_range("Finite field element index is out of range");
+        }
+        polynomial_type value;
+        for (std::size_t i = 0; i < K; ++i) {
+            value.set_coefficient(i, coefficient_type::from_index(index % P));
+            index /= P;
+        }
+        return from_polynomial(value);
+    }
+
+    static UncachedFiniteFieldElement zero() {
+        return UncachedFiniteFieldElement{};
+    }
+
+    static UncachedFiniteFieldElement one() {
+        return from_integer(1);
+    }
+
+    UncachedFiniteFieldElement add(const UncachedFiniteFieldElement& other) const {
+        const polynomial_type sum = value_.add(other.value_);
+        return from_polynomial(sum);
+    }
+
+    UncachedFiniteFieldElement negate() const {
+        return from_polynomial(value_.negate());
+    }
+
+    UncachedFiniteFieldElement multiply(const UncachedFiniteFieldElement& other) const {
+        const polynomial_type product = value_.multiply(other.value_);
+        return from_polynomial(product);
+    }
+
+    UncachedFiniteFieldElement reciprocal() const {
+        if (is_zero()) {
+            throw std::domain_error("Zero has no reciprocal");
+        }
+        polynomial_type previous_remainder = parent_type::modulus();
+        polynomial_type remainder = value_;
+        polynomial_type previous_coefficient = polynomial_type::zero();
+        polynomial_type coefficient = polynomial_type::one();
+        while (!remainder.is_zero()) {
+            auto division = previous_remainder.divmod(remainder);
+            polynomial_type next_remainder = std::move(division.second);
+            polynomial_type next_coefficient =
+                previous_coefficient - division.first.multiply(coefficient);
+            previous_remainder = std::move(remainder);
+            remainder = std::move(next_remainder);
+            previous_coefficient = std::move(coefficient);
+            coefficient = std::move(next_coefficient);
+        }
+        if (previous_remainder.degree() != 0) {
+            throw std::logic_error("The element is not invertible for this modulus");
+        }
+        const coefficient_type scale = previous_remainder.coefficient(0).reciprocal();
+        return from_polynomial(previous_coefficient.scale_left(scale));
+    }
+
+    bool is_zero() const {
+        return value_.is_zero();
+    }
+
+    bool is_one() const {
+        return value_.is_one();
+    }
+
+    coefficient_type coefficient(std::size_t index) const {
+        if (index >= K) {
+            throw std::out_of_range("Finite field coefficient index is out of range");
+        }
+        return value_.coefficient(index);
+    }
+
+    std::array<coefficient_type, K> coefficients() const {
+        std::array<coefficient_type, K> result{};
+        for (std::size_t i = 0; i < K; ++i) {
+            result[i] = value_.coefficient(i);
+        }
+        return result;
+    }
+
+    const polynomial_type& representative() const {
+        return value_;
+    }
+
+    const parent_type& parent() const {
+        static const parent_type instance;
+        return instance;
+    }
+
+    bool operator==(const UncachedFiniteFieldElement& other) const {
+        return value_ == other.value_;
+    }
+
+    friend std::ostream& operator<<(std::ostream& out, const UncachedFiniteFieldElement& value) {
+        return out << value.value_;
+    }
+};
+
+template<std::uint32_t P, std::size_t K, class ModulusPolicy>
 class FiniteFieldElement : public AdditiveOperators<FiniteFieldElement<P, K, ModulusPolicy>>,
                            public MultiplicativeOperators<FiniteFieldElement<P, K, ModulusPolicy>>,
                            public DivisionOperators<FiniteFieldElement<P, K, ModulusPolicy>> {
